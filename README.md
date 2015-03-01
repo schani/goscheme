@@ -1,6 +1,6 @@
 # Scheme in Go
 
-This is a simple WatchMeCode project that aims to implement a small
+This is a simple WatchPeopleCode project that aims to implement a small
 subset of Scheme in Go.  I'm mainly doing this to teach myself Go.
 
 Feel free to contribute!  If I'm doing something that's unidiomatic in
