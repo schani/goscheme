@@ -14,10 +14,12 @@ import (
 
 type val interface {
 	pr() string
+	equal(val) bool
 }
 
 type seq interface {
 	pr() string
+	equal(val) bool
 
 	empty() bool
 	first() val
@@ -29,6 +31,11 @@ type empty struct {
 
 func (e empty) pr() string {
 	return "()"
+}
+
+func (e empty) equal(other val) bool {
+	_, ok := other.(empty)
+	return ok
 }
 
 func (e empty) empty() bool {
@@ -58,6 +65,14 @@ func (c *cons) pr() string {
 	return fmt.Sprintf("%s)", s)
 }
 
+func (c *cons) equal(other val) bool {
+	cc, ok := other.(*cons)
+	if !ok {
+		return false
+	}
+	return c.car.equal(cc.car) && c.cdr.equal(cc.cdr)
+}
+
 func (c *cons) empty() bool {
 	return false
 }
@@ -78,12 +93,28 @@ func (s symbol) pr() string {
 	return s.name
 }
 
+func (s symbol) equal(other val) bool {
+	ss, ok := other.(symbol)
+	if !ok {
+		return false
+	}
+	return s.name == ss.name
+}
+
 type number struct {
 	i int64
 }
 
 func (n number) pr() string {
 	return fmt.Sprintf("%v", n.i)
+}
+
+func (n number) equal(other val) bool {
+	nn, ok := other.(number)
+	if !ok {
+		return false
+	}
+	return n.i == nn.i
 }
 
 type boolean struct {
@@ -96,6 +127,43 @@ func (b boolean) pr() string {
 	} else {
 		return "#f"
 	}
+}
+
+func (b boolean) equal(other val) bool {
+	bb, ok := other.(boolean)
+	if !ok {
+		return false
+	}
+	return b.b == bb.b
+}
+
+func isTrue(v val) bool {
+	b, ok := v.(boolean)
+	if ok {
+		return b.b
+	}
+	return true
+}
+
+type function interface {
+	call([]val) val
+}
+
+type builtin struct {
+	name string
+	f    func([]val) val
+}
+
+func (b builtin) pr() string {
+	return fmt.Sprintf("#<function:%s>", b.name)
+}
+
+func (b builtin) equal(other val) bool {
+	panic("you should not compare functions!")
+}
+
+func (b builtin) call(args []val) val {
+	return b.f(args)
 }
 
 type lexState struct {
@@ -169,6 +237,7 @@ func (ls lexState) read() (val, lexState, error) {
 			return nil, ls, errors.New("EOS")
 		}
 		c = ls.current()
+		ls = ls.advance()
 		if c == 't' {
 			return boolean{true}, ls, nil
 		}
@@ -192,7 +261,7 @@ func (ls lexState) read() (val, lexState, error) {
 	s := getToken(ls, els)
 	num, err := strconv.ParseInt(s, 10, 64)
 	if err != nil {
-		return &symbol{name: s}, els, nil
+		return symbol{name: s}, els, nil
 	}
 	return number{num}, els, nil
 }
@@ -212,6 +281,150 @@ func readTest(s string) val {
 	return v
 }
 
+func get1(s seq) val {
+	v := s.first()
+
+	if !s.rest().empty() {
+		panic("Too many items in seq")
+	}
+
+	return v
+}
+
+func get3(s seq) (val, val, val) {
+	v1 := s.first()
+	s = s.rest()
+	v2 := s.first()
+	s = s.rest()
+	v3 := s.first()
+	s = s.rest()
+
+	if !s.empty() {
+		panic(fmt.Sprintf("Too many items in seq: %s", s.pr()))
+	}
+
+	return v1, v2, v3
+}
+
+type env interface {
+	lookup(s symbol) (val, bool)
+}
+
+type globalEnv map[string]val
+
+func (ge globalEnv) lookup(s symbol) (val, bool) {
+	v, ok := ge[s.name]
+	return v, ok
+}
+
+func evalApplication(e env, fform val, argForms seq) val {
+	vf := eval(e, fform)
+	f, ok := vf.(function)
+	if !ok {
+		panic(fmt.Sprintf("cannot apply non-function %s", vf.pr()))
+	}
+	args := []val{}
+	for !argForms.empty() {
+		argForm := argForms.first()
+		arg := eval(e, argForm)
+		args = append(args, arg)
+
+		argForms = argForms.rest()
+	}
+	return f.call(args)
+}
+
+func eval(e env, v val) val {
+	switch v := v.(type) {
+	case boolean:
+		return v
+	case number:
+		return v
+	case symbol:
+		res, ok := e.lookup(v)
+		if !ok {
+			panic(fmt.Sprintf("unbound %s", v.name))
+		}
+		return res
+	case seq:
+		head := v.first()
+		switch head := head.(type) {
+		case symbol:
+			switch head.name {
+			case "if":
+				cond, cons, alt := get3(v.rest())
+				if isTrue(eval(e, cond)) {
+					return eval(e, cons)
+				} else {
+					return eval(e, alt)
+				}
+			case "quote":
+				quotee := get1(v.rest())
+				return quotee
+			default:
+				return evalApplication(e, head, v.rest())
+			}
+		default:
+			return evalApplication(e, head, v.rest())
+		}
+	default:
+		panic(fmt.Sprintf("cannot eval %s", v.pr()))
+	}
+	//panic("Should not be reached")
+}
+
+func builtinPlus(args []val) val {
+	sum := int64(0)
+	for _, arg := range args {
+		n, ok := arg.(number)
+		if !ok {
+			panic(fmt.Sprintf("cannot add non-number %s", arg.pr()))
+		}
+		sum += n.i
+	}
+	return number{sum}
+}
+
+func builtinMul(args []val) val {
+	prod := int64(1)
+	for _, arg := range args {
+		n, ok := arg.(number)
+		if !ok {
+			panic(fmt.Sprintf("cannot multiply non-number %s", arg.pr()))
+		}
+		prod *= n.i
+	}
+	return number{prod}
+}
+
+func evalTest(input string, expected string) {
+	e := map[string]val{
+		"one": number{1},
+		"+":   builtin{name: "+", f: builtinPlus},
+		"*":   builtin{name: "*", f: builtinMul},
+	}
+
+	vinput, err := read(input)
+	if err != nil {
+		panic("could not read")
+	}
+
+	vresult := eval(globalEnv(e), vinput)
+
+	if expected != "" {
+		vexpected, err := read(expected)
+		if err != nil {
+			panic("could not read")
+		}
+
+		if !vexpected.equal(vresult) {
+			panic(fmt.Sprintf("(eval(%s) => %s) != %s", vinput.pr(), vresult.pr(), vexpected.pr()))
+		}
+	}
+
+	fmt.Printf("eval(%s) => %s\n", vinput.pr(), vresult.pr())
+}
+
 func main() {
 	readTest("  123  ")
 	readTest("1-2")
@@ -219,4 +432,20 @@ func main() {
 	readTest("  #f")
 	readTest("  12(  ")
 	readTest("  (+ 1 2 () )")
+	readTest("(if #f 1 2)")
+
+	evalTest("123", "123")
+	evalTest("#t", "#t")
+	evalTest("#f", "#f")
+
+	evalTest("(if #f 1 2)", "2")
+	evalTest("(if 123 1 2)", "1")
+	evalTest("(if 123 (quote true) (quote false))", "true")
+
+	evalTest("one", "1")
+	evalTest("+", "")
+	evalTest("(+ 1 2 3)", "6")
+	evalTest("(* 3 4)", "12")
+	evalTest("((if #t + *) 3 4)", "7")
+	evalTest("((if #f + *) 3 4)", "12")
 }
