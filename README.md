@@ -8,7 +8,9 @@ Go and there's a better way, let me know.
 
 ## Episodes
 
-[1: The Reader](https://www.youtube.com/watch?v=5TJkSIatolI)
+1. [The Reader](https://www.youtube.com/watch?v=5TJkSIatolI)
+
+2. [Simple Evaluation](https://www.youtube.com/watch?v=xt3lq7cdoeA)
 
 ## TODO
 
